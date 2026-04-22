@@ -1,18 +1,32 @@
-# 📊 Clasificación Estadística: Proyecto Seeds
+# Análisis y clasificación de semillas de trigo
 
-## 📌 Descripción del Problema
-El análisis exploratorio y el modelado estadístico son fundamentales para comprender datos complejos. En este proyecto se analizó el conocido conjunto de datos de semillas (Seeds dataset) con el objetivo de caracterizar estadísticamente y clasificar diferentes tipos de semillas según sus propiedades geométricas y morfológicas.
+Este proyecto consiste en un análisis exploratorio y la construcción de modelos de clasificación supervisada para identificar variedades de trigo a partir de características morfológicas de las semillas.
 
-## 🛠️ Stack Tecnológico
-- **Lenguaje:** R
-- **Generación de Reportes:** RMarkdown, knitr
-- **Análisis y Manipulación:** dplyr, tidyr
-- **Modelado Estadístico:** stats, MASS
+El dataset utilizado (Seeds Dataset - UCI) contiene mediciones físicas de semillas pertenecientes a tres variedades: Kama, Rosa y Canadian.
 
-## 🔬 Metodología Aplicada
-- **Análisis Descriptivo y Exploratorio (EDA):** Detección de outliers, distribuciones univariadas y multivariadas.
-- **Modelado Estadístico:** Uso de técnicas de clasificación y análisis multivariado para separar las clases (variedades de trigo).
-- **Comunicación Científica:** Generación de un reporte dinámico y reproducible utilizando RMarkdown (`.Rmd`) compilado a HTML.
+El objetivo principal es evaluar si las variables morfológicas permiten distinguir correctamente entre las variedades y comparar el desempeño de distintos modelos predictivos.
 
-## 📊 Resultados Técnicos
-El análisis permitió clasificar estadísticamente las variedades de semillas con un alto grado de confianza. A través del uso de RMarkdown, se logró un flujo de trabajo 100% reproducible, vinculando directamente los cálculos estadísticos con el reporte analítico final.
+## Metodología
+
+Se realiza un análisis completo en R que incluye:
+
+- Análisis exploratorio de datos (distribuciones, outliers y correlaciones)
+- Visualización de relaciones entre variables
+- Modelos de clasificación:
+  - Árbol de decisión (CART)
+  - Validación cruzada (5-Fold)
+  - Random Forest
+  - Gradient Boosting Machine (GBM)
+
+## Objetivo
+- Clasificar variedades de trigo usando variables físicas de las semillas
+- Comparar el rendimiento de distintos modelos de machine learning
+- Identificar las variables más importantes en la clasificación
+
+## Resultados
+
+Los modelos de ensamble (Random Forest y Boosting) alcanzan los mejores resultados de precisión, superando al árbol de decisión simple. Las variables más relevantes para la clasificación son las relacionadas con el tamaño del grano, como `area`, `perimeter` y `groove_length`.
+
+## Conclusión
+
+Las características morfológicas de las semillas permiten una clasificación altamente precisa de las variedades de trigo. Los métodos basados en árboles muestran un buen equilibrio entre interpretabilidad y poder predictivo.
