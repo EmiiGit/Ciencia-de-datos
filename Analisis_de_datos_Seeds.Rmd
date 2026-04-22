@@ -1,0 +1,806 @@
+
+---
+title: "Análisis y clasificación de semillas de trigo"
+output:
+  html_document:
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    fig_caption: true
+    theme: flatly
+    highlight: tango
+    df_print: paged
+    css: styles.css
+---
+
+<style>
+/* ---- FORMATO GENERAL DEL INFORME QUE PIDE LA PROFE ---- */
+
+/* tipo de letra */
+body {
+  font-family: "Times New Roman", Times, serif;
+  font-size: 11pt;
+  line-height: 1.5;
+  margin: 2.5cm;
+}
+
+/* secciones */
+h1 {
+  font-size: 16pt;
+  font-weight: bold;
+  text-align: left;
+}
+
+/* subsecciones */
+h2, h3 {
+  font-size: 14pt;
+  font-weight: bold;
+  text-align: left;
+}
+
+h1.title {
+  text-align: center;
+  font-size: 20pt;
+}
+
+table {
+  margin-left: auto;
+  margin-right: auto;
+}
+</style>
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+Sys.setlocale("LC_ALL", "es_ES.UTF-8")
+```
+
+
+```{r}
+
+# todas las librerias necesarias 
+
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(ggcorrplot)
+library(randomForest)
+library(gbm)
+library(rpart.plot)
+library(rpart)
+library(knitr)
+library(tidyverse)
+library(tidyr)
+library(knitr)
+library(kableExtra)
+library(ggplot2)
+library(gridExtra)
+library(grid)
+library(ggcorrplot)
+
+```
+
+------------------------------------------------------------------------
+
+
+**Autora:** María Emilia Jalil\
+**Materia:** Herramientas de Ciencias de Datos y Biología\
+Facultad de Ciencias Exactas y Naturales - UBA
+
+------------------------------------------------------------------------
+
+# **Introducción**
+
+Identificar variedades de trigo a partir de sus rasgos físicos constituye un problema clásico en biología y agricultura. Contar con métodos automáticos para esta tarea puede mejorar el control de calidad de semillas y optimizar los procesos de selección y comercialización, ya que cada variedad presenta propiedades y rendimientos diferentes.
+
+El conjunto de datos analizado corresponde al **Seeds Dataset** del *UCI Machine Learning Repository*, que contiene mediciones morfológicas de semillas pertenecientes a tres variedades de trigo: *Kama*, *Rosa* y *Canadian*. Cada observación incluye variables físicas como el área, perímetro, compacidad, longitud, ancho, asimetría y longitud del surco del grano.
+
+**Objetivo del análisis:**  
+Evaluar si las características físicas de las semillas permiten distinguir correctamente entre las variedades de trigo aplicando distintos modelos basados en árboles de decisión y métodos de ensamble.
+
+**Hipótesis:**  
+Se plantea que las variables morfológicas de las semillas —dimensiones, proporciones y longitud del surco del grano— contienen información suficiente para **distinguir de manera confiable las variedades de trigo** mediante modelos supervisados basados en árboles de decisión.
+
+
+
+**En síntesis, se busca responder:**
+
+-  ¿Qué características físicas presentan mayor relevancia estadística o poder predictivo para distinguir entre variedades de trigo?
+
+-  ¿Existen correlaciones significativas entre las variables morfológicas que indiquen posibles relaciones o redundancias entre medidas?
+
+-  ¿Qué nivel de precisión alcanzan los distintos modelos de clasificación al identificar correctamente la variedad de trigo?
+
+
+------------------------------------------------------------------------
+
+# **Metodología**
+
+## **Descripción del conjunto de datos**
+
+El conjunto de datos analizado corresponde al **Seeds Dataset**, proveniente del *UCI Machine Learning Repository*. Fue recolectado por el Instituto de Investigación de Agricultura de Lublin (Polonia) y contiene mediciones morfológicas de semillas de trigo obtenidas a partir de imágenes digitalizadas.
+
+El dataset posee **210 observaciones** y **8 variables**: siete predictoras numéricas y una categórica que representa la variedad de trigo (variable objetivo).
+
+
+**Variables predictoras**
+
+- **Area:** superficie proyectada de la semilla (mm²).  
+- **Perimeter:** longitud del contorno del grano.  
+- **Compactness:** $C = \frac{4\pi \times area}{perimeter^2}$, mide cuán redonda o compacta es la semilla.  
+  Dado que depende directamente del área y del perímetro, estas tres variables no son independientes entre sí.  
+  Será interesante analizar cuál de ellas aporta mayor información al modelo, o si la variable de *compactness* resume de manera más eficiente la relación entre ambas.  
+- **Length:** eje longitudinal del grano.  
+- **Width:** medida transversal del grano.  
+- **Asymmetry:** grado de desviación respecto a la simetría.  
+- **Groove length:** longitud del surco del núcleo.
+
+La variable **variety** toma tres valores: *Kama*, *Rosa* y *Canadian*, que serían especificamente nuestras tres variedades de trigo analizadas.
+
+En nuestro conjunto de datos no se observan datos faltantes, por ende no será necesario realizar procedimientos de eliminación ni imputación de datos.
+
+
+
+
+
+## **Visualización del espacio de decisión**
+
+Con el fin de comprender mejor cómo los modelos de árboles separan las observaciones de acuerdo con las variables más relevantes, se generaron visualizaciones del espacio bidimensional definido por *groove_length* y *area*. Estas variables fueron seleccionadas por su alta importancia en la construcción de los árboles durante la validación cruzada.  
+
+
+
+```{r}
+# cargo los datos 
+
+column_names <- c(
+  "area", "perimeter", "compactness", 
+  "length", "width", "asymmetry", 
+  "groove_length", "variety"
+)
+
+ruta <- "C:/Users/memil/Downloads/seeds_dataset"
+
+
+seeds <- read.table("seeds_dataset.txt", header = FALSE, sep = "", col.names = column_names)
+
+
+
+seeds$variety <- factor(seeds$variety,
+                        labels = c("Kama", "Rosa", "Canadian"))
+
+# hay valores faltantes? 
+
+# print(paste("Cantidad de valores faltantes de seeds:", sum(is.na(seeds))))
+
+
+```
+
+
+
+
+------------------------------------------------------------------------
+
+## **Idea general del análisis**
+
+El enfoque metodológico se basa en dos etapas:
+
+1.**Análisis exploratorio:** En esta etapa se busca comprender el comportamiento de las variables y sus relaciones, identificar posibles valores atípicos, y realizar resúmenes estadísticos y visualizaciones descriptivas. También se analizan las correlaciones entre las variables para detectar relaciones lineales fuertes o redundancias informativas. Este análisis exploratorio permite obtener una visión general de la estructura interna del conjunto de datos y proporciona un contexto inicial para interpretar posteriormente los resultados de los modelos de clasificación.
+
+
+2.**Modelado de árboles de decisión:**  
+
+En esta etapa se entrenan modelos de árboles de decisión, Random Forest y Boosting.
+Para el árbol de decisión se aplica validación cruzada (5-Fold) como método de evaluación, a fin de estimar el rendimiento promedio del modelo bajo diferentes particiones del conjunto de datos.
+
+En el caso del modelo de Boosting (GBM), la validación cruzada interna se utiliza para determinar el número óptimo de iteraciones (número de árboles), evitando el sobreajuste.
+Finalmente, el Random Forest se entrena con 500 árboles y selección aleatoria de predictores en cada división, utilizando su error interno (out-of-bag) como estimador del rendimiento general.
+
+
+------------------------------------------------------------------------
+
+# **Resultados**
+
+## **Análisis exploratorio**
+
+Para analizar la distribución de las variables morfológicas según la variedad de trigo, se construyeron *boxplots agrupados por clase*. Este tipo de gráfico permite observar la variabilidad y las diferencias en la tendencia central entre variedades, así como detectar valores inusuales según la forma de distribución de cada variable.
+
+```{r fig_boxplots, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 1 – Distribución de las variables morfológicas por variedad de trigo"}
+
+# tuneamos el dataset a formato largo para graficar mas facil
+
+seeds_long <- seeds %>%
+  pivot_longer(
+    cols = 1:7,
+    names_to = "name",
+    values_to = "value"
+  )
+
+# hacemos boxplots por variable para ver como se distribuyen 
+
+ggplot(seeds_long, aes(x = variety, y = value, fill = variety)) +
+  geom_boxplot() +
+  facet_wrap(~ name, scales = "free", ncol = 3) +
+  scale_fill_manual(
+    values = c(
+      "Kama" = "#33A02C",      
+      "Rosa" = "#FF69B4",     
+      "Canadian" = "#1F78B4"   
+    ),
+    name = "Variedad de trigo"
+  ) +
+  theme_bw() +
+  theme(
+    legend.position = c(0.95, -0.05),     
+    legend.justification = c("right", "bottom"),
+    legend.background = element_rect(fill = "white", color = "gray80"),
+    strip.background = element_rect(fill = "gray90", color = "gray70"),
+    panel.grid.major = element_line(color = "gray90"),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(              
+      face = "bold",                   
+      hjust = 0.5,                       
+      size = 14                         
+    )
+  ) +
+  labs(
+    title ="Distribución de variables por variedad de trigo",
+    x = NULL,
+    y = "Valor"
+  )
+
+
+```
+
+
+A partir de estas observaciones de la Figura 1, se espera que las variables de tamaño y proporción (especialmente **área**, **width** y **perimetro**) serán las más relevantes para los modelos de clasificación basados en árboles de decisión, ya que reflejan diferencias estructurales claras entre las variedades. En cambio, las variables vinculadas a la forma del grano o a detalles más sutiles (**compactness**, **asymmetry**, **groove_length**) probablemente aporten información secundaria o complementaria, ayudando a refinar los límites de decisión pero sin ser determinantes por sí solas.
+
+
+
+
+------------------------------------------------------------------------
+
+## **Correlaciones entre variables**
+
+En la Tabla 1 se presentan los coeficientes de correlación de Pearson entre las variables morfológicas.Se observa una correlación positiva elevada entre *area*, *perimeter* y *groove_length*, lo que sugiere que describen un patrón común asociado al tamaño general del grano.  
+En los modelos de ensamble, esta relación puede reflejarse en la importancia relativa asignada a cada variable, dado que el algoritmo prioriza aquellas que logran una mejor separación entre clases, aun cuando exista correlación entre ellas.
+
+
+```{r corr_matrix, echo=FALSE, message=FALSE, warning=FALSE}
+# Calcular y redondear matriz de correlación
+corr_matrix <- cor(seeds[, 1:7])
+corr_matrix <- round(corr_matrix, 3)
+
+# Crear tabla con título numerado y estilo
+kbl(corr_matrix, 
+    caption = "Tabla 1 – Matriz de correlación de Pearson entre variables morfológicas",
+    digits = 3,
+    align = c("l", rep("c", 7)),
+    escape = FALSE) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width = FALSE,
+    position = "center",
+    font_size = 13
+  ) %>%
+  row_spec(0, background = "#D6EAF8", bold = TRUE, color = "#1B2631") %>%
+  column_spec(1, bold = TRUE, color = "#1B2631", background = "#D6EAF8")
+
+
+
+```
+
+
+
+
+
+
+
+```{r fig_corrplot, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 2 – Mapa de calor de correlaciones entre variables morfológicas"}
+
+ggcorrplot(corr_matrix,
+           hc.order = TRUE,       
+           lab = TRUE,            
+           lab_size = 3,
+           type = "lower",       
+           colors = c("#6D9EC1", "white", "#E46726"),
+           title = "Visualización de correlaciones entre variables",
+           ggtheme = theme_minimal)
+```
+
+Como se muestra en la Figura 2,las variables que representan dimensiones físicas —*area*, *perimeter*, *length*, *width* y *groove_length*— muestran correlaciones muy altas entre sí (r > 0.85), indicando que todas capturan información similar relacionada con el tamaño de la semilla.  
+
+En particular, *area* y *perimeter* presentan una correlación casi perfecta (r = 0.994), mientras que *length* y *groove_length* también se asocian fuertemente (r = 0.93).  
+
+Estas relaciones reflejan cierta redundancia informativa entre las variables de tamaño, ya que describen un mismo patrón de variabilidad vinculado a granos más grandes o más pequeños.  
+En el caso de **compactness**, su dependencia con *area* y *perimeter* es exacta, dado que se calcula directamente a partir de ambas, aunque el coeficiente de correlación de Pearson solo mida asociaciones lineales a pares.  
+Por otro lado, **asymmetry** muestra correlaciones bajas o negativas con las restantes variables, lo que indica que aporta información complementaria sobre la forma y simetría del grano, más que sobre su tamaño.  
+
+En conjunto, el análisis exploratorio sugiere que las variables asociadas al tamaño del grano podrían desempeñar un papel central en la clasificación.A partir de esta hipótesis, se espera que los modelos basados en árboles de decisión reflejen ese patrón, asignando mayor importancia a las variables de tamaño en los primeros niveles del árbol, mientras que las de forma podrían tener una contribución menor, útil para refinar la separación en casos límite.  
+
+------------------------------------------------------------------------
+
+## **Modelos de clasificación**
+
+El objetivo de esta sección es evaluar y comparar el desempeño de distintos métodos basados en árboles de decisión aplicados al conjunto de datos. En particular, se entrenarán y analizarán los siguientes modelos:
+
+- **Árbol de decisión (CART)** ajustado y evaluado mediante validación cruzada (5-Fold).  
+- **Random Forest**, que combina el método de *bagging* con la aleatorización en la selección de variables.  
+- **Boosting (GBM)**, que entrena secuencialmente múltiples árboles para corregir los errores de los modelos anteriores.
+
+
+La comparación entre modelos se realializará sobre el mismo conjunto de datos, evaluando el rendimiento de cada uno mediante la métrica de *accuracy*, con el objetivo de identificar cuál logra la mejor capacidad de clasificación de las variedades de trigo.
+
+
+En función de los resultados del análisis exploratorio, se espera que los modelos alcancen una alta precisión, ya que las variables presentan una clara separación entre clases.
+Sin embargo, los métodos de ensamble (Bagging, Random Forest y Boosting) deberían superar al árbol simple al reducir la varianza y mejorar la capacidad de generalización.
+
+Previo al entrenamiento, se verifica si las clases se encuentran balanceadas. En caso de detectarse un desbalance significativo, se recomienda aplicar una división estratificada del conjunto de datos, de modo que se mantenga la proporción original de cada variedad en las particiones de entrenamiento y prueba.
+
+En la Figura 3 se muestra la proporción de observaciones correspondientes a cada variedad de trigo presente en el conjunto de datos. Como puede observarse, las tres clases (*Kama*, *Rosa* y *Canadian*) presentan tamaños similares, lo que garantiza un equilibrio adecuado entre categorías para el entrenamiento de los modelos supervisados.
+
+```{r fig_pie_variedades, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 3 – Proporción de observaciones por variedad de trigo"}
+
+# Calcular proporciones y etiquetas
+pie_data <- seeds %>%
+  count(variety) %>%
+  mutate(pct = n / sum(n) * 100,
+         label = paste0(variety, "\n", round(pct, 1), "%"))
+
+# Gráfico de torta con porcentajes
+ggplot(pie_data, aes(x = "", y = n, fill = variety)) +
+  geom_col(width = 1, color = "white") +
+  coord_polar(theta = "y") +
+  geom_text(aes(label = label),
+            position = position_stack(vjust = 0.5),
+            size = 4) +
+  scale_fill_manual(values = c("Kama" = "#33A02C",
+                               "Rosa" = "#FF69B4",
+                               "Canadian" = "#1F78B4")) +
+  theme_void() +
+  labs(title = "Proporción de observaciones por variedad") +
+  theme(plot.title = element_text(face = "bold", hjust = 0.5))
+
+
+```
+Dado que las clases se encuentran perfectamente balanceadas, es decir hay 70 instancias para cada una de las posibles etiquetas, no resulta necesario aplicar una división estratificada.
+
+Con el objetivo de comparar distintos enfoques de modelado, se construirán dos versiones del árbol de decisión:
+
+- Un modelo simple, entrenado con el 80 % de los datos y evaluado sobre el 20 % restante.
+
+- Un modelo con validación cruzada de 5 particiones (k = 5), que permite aprovechar la totalidad del conjunto de datos y obtener una estimación más robusta del rendimiento.
+
+En el caso del esquema de validación cruzada, el conjunto de datos (210 observaciones) se divide en 5 folds de 42 instancias cada uno. En cada iteración, el modelo se entrena con 168 observaciones (80 %) y se valida con las 42 restantes (20 %). Este proceso se repite 5 veces, alternando los subconjuntos de entrenamiento y validación, de modo que cada observación se utiliza exactamente una vez como parte del conjunto de prueba.
+Finalmente, las métricas de rendimiento obtenidas en cada fold se promedian, generando una evaluación más estable y menos dependiente de una única partición aleatoria.
+
+La comparación entre ambos modelos permitirá analizar si la validación cruzada mejora la estimación del desempeño respecto al entrenamiento tradicional 80/20.
+
+### **Árbol de decisión simple** 
+
+Se contruyó un arbol de decisión utilizando los parametros por default de R. Separamos los datos en un conjunto de entrenamiento y en otro de test para evaluar nuestros resultados (división 80-20). 
+
+```{r}
+
+# ----------------- arbol de desicion simple 80- 20 --------------------
+
+set.seed(1234)
+
+
+indice <- sample(1:nrow(seeds), 0.8 * nrow(seeds))
+train <- seeds[indice, ]
+test  <- seeds[-indice, ]
+
+tree_model <- rpart(variety ~ ., data = train, method = "class")
+
+pred_test  <- predict(tree_model, test, type = "class")
+accuracy_simple <- mean(pred_test == test$variety)
+
+# cat("Accuracy Árbol simple (80/20):", round(accuracy_simple, 3), "\n")
+
+```
+El modelo de **árbol de decisión simple (CART)** entrenado alcanzó un **accuracy de `r round(accuracy_simple, 3)`** en el conjunto de prueba, lo que indica un buen nivel de clasificación inicial sin ajuste de hiperparámetros.
+
+
+En la Figura 4 se presenta la estructura del **árbol de decisión simple (CART)** entrenado con una partición 80/20. Cada nodo muestra la variable utilizada para dividir los datos y la clase predominante en cada región terminal. Los colores corresponden a las tres variedades de trigo: *Kama* (verde), *Rosa* (rosado) y *Canadian* (azul).
+
+
+
+```{r fig_tree_simple, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 4 – Árbol de decisión simple (CART) entrenado con una partición 80/20"}
+library(rpart.plot)
+
+class_colors <- c("Kama"="#33A02C",
+                  "Rosa"="#FF69B4",
+                  "Canadian"="#1F78B4")
+
+node_colors_simple <- class_colors[tree_model$frame$yval2[, 1]]
+
+rpart.plot(tree_model,
+           box.col = node_colors_simple,
+           shadow.col = "gray90",
+           branch.col = "gray50",
+           main = "Árbol de decisión simple (80/20)")
+
+
+
+
+```
+La variable *groove_length* aparece como primer punto de corte, seguida por *area*, lo que confirma que las dimensiones del grano son las características más relevantes para la clasificación de las variedades de trigo. En conjunto, las hojas finales son muy puras, lo que indica que el modelo tiene alta capacidad de clasificación sobre el conjunto de entrenamiento.  
+
+Además, la estructura del árbol es simple y fácil de interpretar: con solo dos variables y pocos nodos terminales se alcanza una muy buena capacidad predictiva, lo que demuestra que las diferencias morfológicas entre las variedades son claras y consistentes.
+
+
+### **Árbol de decisión simple + cross validation**
+
+Para obtener una estimación más robusta del rendimiento del modelo, se aplicó un esquema de **validación cruzada de 5 particiones (k = 5)**. En cada iteración, el modelo se entrena sobre 4 subconjuntos y se evalúa en el restante, repitiendo el proceso hasta cubrir todos los pliegues. El promedio de *accuracy* obtenido a lo largo de las cinco iteraciones se utiliza como medida general de desempeño.
+
+
+```{r}
+
+# ------------------------------- Validación cruzada 5-Fold -------------------------------------------------
+k <- 5
+folds <- sample(rep(1:k, length.out = nrow(seeds)))
+accuracies <- numeric(k)
+
+for (i in 1:k) {
+  train_data <- seeds[folds != i, ]
+  test_data  <- seeds[folds == i, ]
+  
+  model <- rpart(variety ~ ., data = train_data, method = "class")
+  preds <- predict(model, test_data, type = "class")
+  accuracies[i] <- mean(preds == test_data$variety)
+}
+
+accuracy_cv <- mean(accuracies)
+
+
+# cat("Accuracy promedio Árbol con Cross Validation (5-Fold):", round(accuracy_cv, 3), "\n")
+
+```
+
+
+El modelo de árbol de decisión (CART) ajustado mediante validación cruzada alcanzó un accuracy promedio de 0.895, lo que representa una mejora respecto al árbol simple, confirmando la estabilidad y consistencia del desempeño obtenido bajo diferentes divisiones del conjunto de datos.
+
+En la Figura 5 se muestran los límites de decisión obtenidos en cada pliegue de la validación cruzada. Cada gráfico representa un modelo entrenado en un subconjunto diferente del conjunto de datos, sobre el espacio definido por *groove_length* y *area*.  
+El fondo coloreado indica las regiones de clasificación estimadas por cada árbol, mientras que los puntos corresponden a las observaciones reales utilizadas en el entrenamiento.
+
+```{r fig_cv_boundaries, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 5 – Límites de decisión obtenidos en los cinco pliegues de la validación cruzada (espacio definido por groove_length y area)"}
+library(gridExtra)
+
+set.seed(1234)
+
+k <- 5
+folds <- sample(rep(1:k, length.out = nrow(seeds)))
+models_cv <- list()
+accuracies_cv <- numeric(k)
+
+for (i in 1:k) {
+  train_data <- seeds[folds != i, ]
+  test_data  <- seeds[folds == i, ]
+  
+  model <- rpart(variety ~ ., data = train_data, method = "class")
+  models_cv[[i]] <- model
+  
+  preds <- predict(model, test_data, type = "class")
+  accuracies_cv[i] <- mean(preds == test_data$variety)
+}
+
+groove_min <- min(seeds$groove_length) - 0.5
+groove_max <- max(seeds$groove_length) + 0.5
+area_min   <- min(seeds$area) - 3
+area_max   <- max(seeds$area) + 3
+
+grid_data <- expand.grid(
+  groove_length = seq(groove_min, groove_max, length.out = 300),
+  area = seq(area_min, area_max, length.out = 300)
+)
+
+plots_list <- list()
+
+for (fold in 1:k) {
+  
+  grid_full <- grid_data
+  for (col in setdiff(names(seeds), c("groove_length", "area", "variety"))) {
+    grid_full[[col]] <- median(seeds[[col]], na.rm = TRUE)
+  }
+  
+  grid_full$prediction <- predict(models_cv[[fold]], grid_full, type = "class")
+  train_data_fold <- seeds[folds != fold, ]
+  
+  p <- ggplot(grid_full, aes(x = groove_length, y = area)) +
+    geom_tile(aes(fill = prediction), alpha = 0.35, show.legend = FALSE) +
+    geom_point(
+      data = train_data_fold,
+      aes(color = variety),
+      size = 2, shape = 21, stroke = 0.8, fill = NA, show.legend = FALSE
+    ) +
+    scale_fill_manual(values = c("Kama"="#33A02C","Rosa"="#FF69B4","Canadian"="#1F78B4")) +
+    scale_color_manual(values = c("Kama"="#33A02C","Rosa"="#FF69B4","Canadian"="#1F78B4")) +
+    labs(
+      title = paste("Fold", fold, "| Accuracy:", round(accuracies_cv[fold], 3)),
+      x = "Groove Length", y = "Area (mm²)"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face="bold", size=12, hjust=0.5),
+      legend.position="none",
+      panel.grid.major=element_line(color="gray95", size=0.2),
+      panel.grid.minor=element_blank(),
+      axis.text=element_text(size=9)
+    ) +
+    coord_cartesian(xlim=c(groove_min, groove_max), ylim=c(area_min, area_max))
+  
+  plots_list[[fold]] <- p
+}
+
+invisible(do.call(grid.arrange, c(plots_list, ncol=2, nrow=3)))
+
+
+```
+
+Los cinco árboles generados muestran que durante la validación cruzada desarrollan límites de decisión muy similares, lo que confirma la **robustez y consistencia** del modelo. En todos los pliegues, las tres variedades de trigo (*Kama*, *Rosa* y *Canadian*) se separan de forma clara, con fronteras bien definidas y mínima superposición entre clases.  
+
+El patrón de separación se mantiene estable a lo largo de las repeticiones, evidenciando que el árbol de decisión generaliza adecuadamente y no depende de una partición específica de los datos.  
+
+Aunque se aprecian ligeras variaciones en las fronteras entre pliegues, las métricas de *accuracy* (entre 0.83 y 0.93) muestran un rendimiento consistente. Esto sugiere que las variables morfológicas *groove_length* y *area* concentran la mayor parte del poder discriminante del conjunto de datos, permitiendo distinguir de manera robusta las variedades de trigo sin requerir atributos adicionales.
+
+
+
+
+## **Comparación entre el árbol simple y el árbol con validación cruzada**
+
+El modelo de **árbol de decisión simple (80/20)** alcanzó un *accuracy* de 0.857, mientras que el modelo evaluado mediante **validación cruzada 5-fold** obtuvo un *accuracy* promedio de 0.895. Si bien la diferencia es moderada, la validación cruzada proporciona una estimación más confiable del rendimiento real, dado que cada partición se evalúa utilizando datos no observados durante el entrenamiento.
+
+Dado que los **árboles de decisión** suelen presentar una alta varianza, se exploraron distintos valores de **hiperparámetros** del modelo, en particular el número mínimo de observaciones requerido para formar una hoja terminal. Este análisis permite examinar cómo varía la complejidad del árbol y su capacidad de generalización según el nivel de restricción aplicado en las divisiones.
+
+
+```{r fig_minbucket, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 6 – Error de clasificación en función del número mínimo de observaciones por hoja (minbucket)"}
+
+set.seed(1234)
+
+indice <- sample(1:nrow(seeds), 0.8 * nrow(seeds))
+train <- seeds[indice, ]
+test  <- seeds[-indice, ]
+
+# Valores de minbucket 
+min_buckets <- c(1, 5, 10, 15, 20, 30, 40, 50, 60, 70)
+resultados <- data.frame(minbucket = min_buckets,
+                         error_train = NA,
+                         error_test = NA)
+
+for (b in min_buckets) {
+  modelo <- rpart(variety ~ ., 
+                  data = train, 
+                  method = "class",
+                  control = rpart.control(minbucket = b))
+  
+  pred_train <- predict(modelo, train, type = "class")
+  pred_test  <- predict(modelo, test,  type = "class")
+  
+  resultados[resultados$minbucket == b, "error_train"] <- 1 - mean(pred_train == train$variety)
+  resultados[resultados$minbucket == b, "error_test"]  <- 1 - mean(pred_test  == test$variety)
+}
+
+resultados$diferencia <- abs(resultados$error_train - resultados$error_test)
+mejor <- resultados[which.min(resultados$diferencia), ]
+
+library(ggplot2)
+
+ggplot(resultados, aes(x = reorder(as.factor(minbucket), -minbucket))) +
+  geom_line(aes(y = error_train, color = "Entrenamiento", group = 1), linewidth = 1) +
+  geom_point(aes(y = error_train, color = "Entrenamiento"), size = 3) +
+  geom_line(aes(y = error_test, color = "Test", group = 1), linewidth = 1) +
+  geom_point(aes(y = error_test, color = "Test"), size = 3) +
+  geom_vline(xintercept = as.character(mejor$minbucket), linetype = "dashed", color = "black") +
+  scale_color_manual(values = c("Entrenamiento" = "#1F78B4", "Test" = "#33A02C")) +
+  theme_minimal() +
+  labs(
+    title = "Error según la cantidad mínima de observaciones por hoja",
+    x = "← Árbol más simple | Árbol más complejo →",
+    y = "Error de clasificación"
+  ) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    legend.position = "bottom",
+    legend.title = element_blank()
+  )
+
+```
+
+
+ 
+En la Figura 6 se observa la variación del error de clasificación en los conjuntos de entrenamiento (azul) y prueba (verde) según el valor del hiperparámetro *minbucket*, que define la cantidad mínima de observaciones por hoja terminal.
+
+
+Valores elevados de *minbucket* generan árboles simples con pocas divisiones y alto error en ambos conjuntos, evidenciando **subajuste**. A medida que el parámetro disminuye, el modelo se vuelve más flexible: el error de entrenamiento se reduce de forma continua, mientras que el de prueba alcanza un mínimo cercano a *minbucket ≈ 15* antes de aumentar nuevamente por **sobreajuste**.  
+
+
+## **Random Forest**
+
+El modelo de **Random Forest**, compuesto por 500 árboles y tres predictores considerados por división, alcanzó un *accuracy* de 0.929 en el conjunto de prueba, superando el rendimiento obtenido con el árbol de decisión simple (*accuracy* = 0.857).  
+
+
+Esta mejora refleja una mayor capacidad de generalización y una reducción de la varianza gracias al promedio de múltiples árboles independientes.  
+
+En la Figura 7 se presenta la importancia de las variables según la disminución promedio del índice Gini. Las variables *groove_length*, *area* y *perimeter* muestran los mayores valores de importancia, confirmando que las dimensiones del grano constituyen los atributos más relevantes para la clasificación de las variedades de trigo, en concordancia con los resultados obtenidos en los modelos anteriores.
+
+```{r fig_importancia_rf, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 7 – Importancia de las variables según la disminución promedio del índice Gini en el modelo Random Forest"}
+set.seed(1234)
+
+rf_model <- randomForest(
+  variety ~ ., 
+  data = train, 
+  ntree = 500,        # cantidad de árboles
+  mtry = 3,           
+  importance = TRUE
+)
+
+pred_rf <- predict(rf_model, test)
+accuracy_rf <- mean(pred_rf == test$variety)
+
+# ---------- gráfico de importancia de variables ---------------------------------------------
+importancia <- as.data.frame(importance(rf_model))
+importancia$Variable <- rownames(importancia)
+importancia <- importancia %>% arrange(desc(MeanDecreaseGini))
+
+library(ggplot2)
+
+ggplot(importancia, aes(x = reorder(Variable, MeanDecreaseGini), 
+                        y = MeanDecreaseGini)) +
+  geom_col(fill = "#1F78B4", width = 0.7) +
+  coord_flip() +
+  theme_minimal(base_size = 12) +
+  theme(
+    panel.background = element_rect(fill = "gray92", color = NA),
+    plot.background  = element_rect(fill = "gray92", color = NA),
+    panel.grid.major = element_line(color = "white", size = 0.5),
+    panel.grid.minor = element_blank(),
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 14),
+    axis.title.x = element_text(face = "bold"),
+    axis.title.y = element_text(face = "bold"),
+    axis.text = element_text(color = "black"),
+    axis.ticks = element_line(color = "gray70")
+  ) +
+  labs(
+    title = "Importancia de variables en Random Forest",
+    x = "Variable",
+    y = "Disminución promedio del índice Gini"
+  )
+
+```
+
+
+
+## **Boosting**
+
+
+En este caso se entrena un modelo de **Gradient Boosting Machine (GBM)**, una técnica de ensamble secuencial en la que cada nuevo árbol se ajusta para **corregir los errores residuales** de los árboles anteriores. De este modo, cada iteración concentra el aprendizaje en las observaciones más difíciles de clasificar, mejorando progresivamente la capacidad predictiva del modelo.
+
+El modelo utiliza una distribución **multinomial**, dado que se trata de una **clasificación multiclase** (*Kama*, *Rosa* y *Canadian*). Asimismo, se aplica **validación cruzada (k = 5)** para determinar el número óptimo de iteraciones (*número de árboles*), evitando el sobreajuste y garantizando un equilibrio adecuado entre sesgo y varianza.
+
+En la Figura 8 se muestra la evolución del error a medida que aumentamos la cantidad de árboles.
+
+```{r fig_boosting_error, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Figura 8 – Evolución del error de entrenamiento y validación en el modelo Gradient Boosting Machine (GBM)"}
+set.seed(1234)
+
+gbm_model <- gbm(
+  formula = variety ~ .,
+  data = train,
+  distribution = "multinomial",
+  n.trees = 1000,
+  interaction.depth = 3,
+  shrinkage = 0.01,
+  n.minobsinnode = 5,
+  cv.folds = 5,
+  verbose = FALSE
+)
+
+best_iter <- gbm.perf(gbm_model, method = "cv", plot.it = FALSE)
+
+pred_boost <- predict(gbm_model, test, n.trees = best_iter, type = "response")
+pred_class <- colnames(pred_boost)[apply(pred_boost, 1, which.max)]
+accuracy_boost <- mean(pred_class == test$variety)
+
+par(bg = "gray94")
+
+plot(
+  gbm_model$train.error, type = "l", lwd = 2,
+  col = "black",
+  xlab = "Cantidad de árboles (iteraciones)",
+  ylab = "Error del modelo",
+  main = "Evolución del error en el modelo GBM",
+  cex.main = 1.1, font.main = 2
+)
+lines(gbm_model$cv.error, col = "forestgreen", lwd = 2)
+abline(v = best_iter, col = "#0072B2", lty = 2, lwd = 2)
+
+text(
+  x = best_iter + 30, 
+  y = min(gbm_model$cv.error) + 0.05,
+  labels = paste("Óptimo =", best_iter, "árboles"),
+  col = "#0072B2", font = 2, cex = 0.9
+)
+
+legend(
+  "topright",
+  legend = c("Error de entrenamiento", "Error de validación (CV)", "Número óptimo de árboles"),
+  col = c("black", "forestgreen", "#0072B2"),
+  lwd = c(2, 2, 2),
+  lty = c(1, 1, 2),
+  bty = "n",
+  text.font = 2
+)
+
+box(col = "gray40", lwd = 1.5)
+
+```
+
+
+
+## **Comparación de modelos**
+
+En la Tabla 2 se resumen los valores de *accuracy* obtenidos para los distintos modelos aplicados. Tanto los métodos de ensamble como el árbol individual alcanzan altos niveles de precisión, aunque los primeros presentan un desempeño superior.
+
+```{r tabla_comparacion_modelos, echo=FALSE, message=FALSE, warning=FALSE, fig.cap="Tabla 2 – Comparación de accuracies obtenidos para los distintos modelos"}
+# Crear data frame con los resultados
+comparacion_modelos <- data.frame(
+  Modelo = c("Árbol simple (80/20)",
+             "Árbol con CV (5-Fold)",
+             "Random Forest",
+             "Boosting (GBM)"),
+  Accuracy = c(round(accuracy_simple, 3),
+               round(accuracy_cv, 3),
+               round(accuracy_rf, 3),
+               round(accuracy_boost, 3))
+)
+
+# Ordenar de mayor a menor accuracy
+comparacion_modelos <- comparacion_modelos %>%
+  arrange(desc(Accuracy))
+
+# Mostrar tabla con formato y numeración
+kbl(comparacion_modelos,
+    caption = "Tabla 2",
+    col.names = c("Modelo", "Accuracy"),
+    align = c("l", "c")) %>%
+  kable_styling(full_width = FALSE, position = "center", font_size = 13)
+
+```
+
+------------------------------------------------------------------------
+
+# **Discusión**
+
+Los resultados confirman la hipótesis inicial: las variables morfológicas relacionadas con el tamaño del grano contienen suficiente información para clasificar correctamente las variedades de trigo
+
+Los modelos basados en árboles alcanzaron *accuracies* superiores al 85 %, mientras que los métodos de ensamble superaron el 90 %, evidenciando un excelente desempeño predictivo.
+
+El **árbol de decisión simple (CART)** permitió interpretar las covariables en el mismo sentido que las hipótesis iniciales, mostrando que las dimensiones físicas del grano son determinantes para la diferenciación de variedades de trigo.
+
+Las variables más importantes para la **clasificación de las variedades** fueron *groove_length*, *area* y *perimeter*, que describen el tamaño y la forma general del grano. En cambio, *asymmetry* y *compactness* aportaron menor información al reflejar características más sutiles de la morfología.
+
+El **Random Forest** mejoró la precisión al reducir la **varianza** mediante el promediado de múltiples árboles construidos sobre subconjuntos aleatorios de observaciones y predictores. Este enfoque produce predicciones más estables, al mitigar la sensibilidad a las fluctuaciones de los datos de entrenamiento.  
+
+El **Boosting (GBM)**, por su parte, alcanzó un rendimiento comparable, corrigiendo iterativamente los errores residuales y concentrando el aprendizaje en las observaciones más difíciles de clasificar, aunque con un costo computacional mayor.
+
+En conjunto, los métodos de ensamble complementan al árbol individual: los primeros aportan mayor capacidad predictiva y estabilidad, mientras que el segundo conserva una estructura interpretativa clara y útil para comprender el comportamiento de las variables.  
+Desde una perspectiva **biológica y agronómica**, los resultados confirman que las características morfológicas —principalmente el tamaño y la longitud del surco del grano— constituyen indicadores confiables para distinguir variedades de trigo. Esto resalta el potencial de los modelos basados en árboles como herramientas de apoyo en tareas de **control de calidad, selección de semillas y mejoramiento genético**, donde la clasificación precisa de cultivares es fundamental.
+
+En síntesis, el análisis demuestra que los métodos supervisados basados en árboles logran un equilibrio adecuado entre **precisión predictiva e interpretabilidad**, y que las relaciones morfológicas identificadas son coherentes con las diferencias biológicas esperadas entre las variedades analizadas.
+
+
+
+------------------------------------------------------------------------
+
+# **Referencias**
+
+-   UCI Machine Learning Repository: Seeds Data Set. <https://archive.ics.uci.edu/ml/datasets/seeds>\
+-   Lichman, M. (2013). *UCI Machine Learning Repository*.\
+-   James, G., Witten, D., Hastie, T., Tibshirani, R. (2021). *An Introduction to Statistical Learning with Applications in R.* Springer.\
+-   Breiman, L. (2001). *Random Forests.* Machine Learning, 45(1), 5--32.
+
+
+
